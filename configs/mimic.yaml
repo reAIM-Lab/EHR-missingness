@@ -1,0 +1,12 @@
+meds_dir: /data/raw_data/mimic/files/mimiciv/meds_v0.6/3.1/MEDS_cohort
+task_dir: /data/processed_datasets/processed_datasets/mimic/mimic_3.1/patient_outcome_tasks/
+concept_dir: /data/processed_datasets/processed_datasets/ehr_foundation_data/ohdsi_cumc_deid/ohdsi_cumc_deid_2023q4r3/concept
+target_dir: /data/processed_datasets/processed_datasets/yk3043/ehrLLM/mimic/
+downstream_task: in_hospital_mortality
+data_seed: 123
+
+#Preprocessing options
+require_baselines: True
+require_demographics: True
+clip_range: True
+observation_window_days: 30

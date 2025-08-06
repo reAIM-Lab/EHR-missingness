@@ -1,0 +1,5 @@
+outputs/
+nohup.out
+
+**/__pycache__/
+*.py[cod]

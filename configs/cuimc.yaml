@@ -1,0 +1,26 @@
+meds_dir: /data/processed_datasets/processed_datasets/ehr_foundation_data/ohdsi_cumc_deid/ohdsi_cumc_deid_2023q4r3_v3_mapped/post_transform/
+task_dir: /data/processed_datasets/processed_datasets/ehr_foundation_data/ohdsi_cumc_deid/ohdsi_cumc_deid_2023q4r3_v3_mapped/task_labels/phenotype_sample
+concept_dir: /data/processed_datasets/processed_datasets/ehr_foundation_data/ohdsi_cumc_deid/ohdsi_cumc_deid_2023q4r3/concept
+target_dir: /data/processed_datasets/processed_datasets/yk3043/ehrLLM/cuimc/
+predictions_dir: /home/yk3043@mc.cumc.columbia.edu/ehrLLM/outputs/cuimc/
+downstream_task: Ischemic_Stroke
+data_seed: 123
+
+#Preprocessing options
+require_baselines: True
+require_demographics: True
+clip_range: True
+observation_window_days: 30
+include_conditions: True
+include_procedures: True
+num_conditions: 20
+num_procedures: 20
+
+# Serialization options
+explicit_missingness: True
+task_query: "Will this patient experience an ischemic stroke in the next year?"
+model_id: "Qwen/Qwen3-8B" #"openai/gpt-oss-20b"
+max_length: 10000
+batch_size: 32
+
+

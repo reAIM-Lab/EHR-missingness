@@ -1,6 +1,9 @@
 import polars as pl
 import shutil
 
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
 def normalize_icd10(df: pl.DataFrame, column: str) -> pl.DataFrame:
     return df.with_columns(
         pl.when(pl.col(column).is_not_null() & pl.col(column).str.starts_with("ICD10CM/"))
@@ -63,3 +66,39 @@ def extract_demo(df_filtered):
     df_demographics = pl.concat([age, ethnicity, gender, race], how="horizontal")
 
     return df_demographics
+
+def preprocess_df(df : pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardizes continuous columns and one-hot encodes categorical columns.
+    Returns a new DataFrame.
+    """
+    df = df.copy()
+    # Replace "unknown" values with NaN
+    df = df.replace("unknown", float('nan'))
+    # Convert columns with only 2 unique non-nan values to binary 0/1
+    for col in df.columns:
+        unique_vals = df[col].dropna().unique()
+        if len(unique_vals) == 2:
+            # Map the two values to 0 and 1
+            val_map = {val: i for i, val in enumerate(unique_vals)}
+            df[col] = df[col].map(val_map)
+
+    # Identify continuous and categorical columns
+    continuous_cols = df.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
+    # Remove label columns if present
+    for col in ['label', 'boolean_value', 'y', 'subject_id', 'split']:
+        if col in continuous_cols:
+            continuous_cols.remove(col)
+        if col in categorical_cols:
+            categorical_cols.remove(col)
+    # Standardize continuous columns
+    if continuous_cols:
+        scaler = StandardScaler()
+        df[continuous_cols] = scaler.fit_transform(df[continuous_cols])
+    # One-hot encode categorical columns
+    if categorical_cols:
+        for col in categorical_cols:
+            # Check if binary categorical
+            df = pd.get_dummies(df, columns=[col], drop_first=False)
+    return df    

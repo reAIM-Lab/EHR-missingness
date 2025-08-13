@@ -59,6 +59,28 @@ def serialize_data(data, config):
 
     return markdown_str
 
+def extract_structured_data(data, config):
+    demographics = extract_demo(data)
+    feature_dict = {}
+    age_value = demographics['age'].to_list()[0]
+    feature_dict['age'] = age_value
+    feature_dict['gender'] = demographics['gender'].to_list()[0]
+    feature_dict['race'] = demographics['race'].to_list()[0]
+
+    all_measurements = codes_to_keep.keys()
+    for measurement in all_measurements:
+        filtered_measurements = data.filter(pl.col("code").is_in(codes_to_keep[measurement]))
+        if not filtered_measurements.is_empty():
+            filtered_measurements = filtered_measurements.with_columns(
+                pl.col("numeric_value").cast(pl.Float64).alias("numeric_value")
+            )
+            feature_dict[measurement] = filtered_measurements["numeric_value"].to_list()[0]
+        else:
+            feature_dict[measurement] = None
+
+    return feature_dict
+
+
 def get_detailed_instruct(config) -> str:
     query = config['task_query']
 

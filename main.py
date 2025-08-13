@@ -3,7 +3,7 @@ import yaml
 from pathlib import Path
 
 from src.data.generate_cohort import generate_cohort
-from src.inference.generate_predictions import generate_predictions
+from src.inference.generate_predictions import generate_predictions, generate_baseline_predictions
 from src.inference.evaluate import evaluate_predictions
 
 def load_config(config_path):
@@ -14,7 +14,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run ehrLLM experiments")
     parser.add_argument('--experiment', type=str, required=True, help='Experiment name', choices=['mimic', 'cuimc', 'ehrshot'])
     parser.add_argument('--config', type=str, default="./configs", help='Path to config file')
-    parser.add_argument('--mode', type=str, required=True, choices=['generate_cohort', 'test', 'evaluate'])
+    parser.add_argument('--mode', type=str, required=True, choices=['generate_cohort', 'test', 'baseline', 'evaluate'])
     return parser.parse_args()
 
 def main():
@@ -25,6 +25,8 @@ def main():
         generate_cohort(config) # Filter MEDS input to generate downstream evaluation cohort
     elif args.mode == 'test':
         generate_predictions(config) # Run inference on downstream evaluation cohort 
+    elif args.mode == 'baseline':
+        generate_baseline_predictions(config)
     elif args.mode == 'evaluate':
         evaluate_predictions(config) # Evaluate predictions
 

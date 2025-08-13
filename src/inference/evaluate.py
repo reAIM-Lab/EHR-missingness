@@ -30,6 +30,10 @@ def evaluate_predictions(config):
 
     print(prompt[1].replace('\\n', '\n'))
     print(generations[1].replace('\\n', '\n'))
+
+    print(len(predictions_1))
+    print(len(predictions_2))
+    print(len(labels))
     
     # Compute metrics
     try:

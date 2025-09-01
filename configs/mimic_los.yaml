@@ -1,0 +1,30 @@
+experiment: mimic
+meds_dir: /data/raw_data/mimic/files/mimiciv/meds_v0.6/3.1/MEDS_cohort
+#meds_dir: /data/raw_data/mimic/files/mimiciv/meds_v0.3
+task_dir: /data/processed_datasets/processed_datasets/mimic/mimic_3.1/patient_outcome_tasks/
+concept_dir: /data/raw_data/mimic/files/mimiciv/meds_v0.6/3.1/MEDS_cohort/metadata/
+#concept_dir: /data/raw_data/mimic/files/mimiciv/meds_v0.3/metadata
+target_dir: /data/processed_datasets/processed_datasets/yk3043/ehrLLM/mimic/
+predictions_dir: /home/yk3043@mc.cumc.columbia.edu/ehrLLM/outputs/mimic/
+downstream_task: long_los
+data_seed: 123
+
+#Preprocessing options
+require_baselines: True
+require_demographics: False
+clip_range: True
+observation_window_days: 30
+labs_only: True
+num_conditions: 20
+num_procedures: 20
+
+# Serialization options
+explicit_missingness: True
+include_missingness_prompt: True
+task_query: "Will this admitted patient be hospitalized for longer than 7 days?"
+# model_id: "Qwen/Qwen3-14B" 
+model_id: "openai/gpt-oss-20b"
+max_length: 10000
+max_samples: 5000
+batch_size: 64
+hidden_states: False

@@ -1,4 +1,5 @@
 outputs/
+figures_mlh/
 nohup.out
 
 **/__pycache__/

@@ -7,14 +7,14 @@ def evaluate_predictions(config):
     predictions_dir = Path(config['predictions_dir'])
     model_name = config['model_id'].split("/")[-1]
     try:
-        with open(predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_False.pkl', 'rb') as f:
+        with open(predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_False_{config["labs_only"]}.pkl', 'rb') as f:
             subject_dicts_1 = pickle.load(f)
     except FileNotFoundError:
         print(f"No predictions found for {config['downstream_task']} with explicit missingness False")
         return None
 
     try:
-        with open(predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_True.pkl', 'rb') as f:
+        with open(predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_True_{config["labs_only"]}.pkl', 'rb') as f:
             subject_dicts_2 = pickle.load(f)
     except FileNotFoundError:
         print(f"No predictions found for {config['downstream_task']} with explicit missingness True")

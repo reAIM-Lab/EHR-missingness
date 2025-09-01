@@ -1,0 +1,31 @@
+experiment: cuimc
+meds_dir: /data/processed_datasets/processed_datasets/ehr_foundation_data/ohdsi_cumc_deid/ohdsi_cumc_deid_2023q4r3_v3_mapped/post_transform/
+task_dir: /data/processed_datasets/processed_datasets/ehr_foundation_data/ohdsi_cumc_deid/ohdsi_cumc_deid_2023q4r3_v3_mapped/task_labels/patient_outcomes_full
+concept_dir: /data/processed_datasets/processed_datasets/ehr_foundation_data/ohdsi_cumc_deid/ohdsi_cumc_deid_2023q4r3/concept
+target_dir: /data/processed_datasets/processed_datasets/yk3043/ehrLLM/cuimc/
+predictions_dir: /home/yk3043@mc.cumc.columbia.edu/ehrLLM/outputs/cuimc/
+downstream_task: death
+data_seed: 123
+
+#Preprocessing options
+require_baselines: True
+require_demographics: False
+clip_range: True
+observation_window_days: 30
+labs_only: True
+include_conditions: False
+include_procedures: False
+num_conditions: 20
+num_procedures: 20
+
+# Serialization options
+explicit_missingness: False
+include_missingness_prompt: False
+task_query: "Will this patient experience in-hospital mortality during this hospitalization?"
+model_id: "Qwen/Qwen3-14B" 
+#model_id: "openai/gpt-oss-20b"
+max_length: 10000
+max_samples: 5000
+batch_size: 64
+hidden_states: False
+

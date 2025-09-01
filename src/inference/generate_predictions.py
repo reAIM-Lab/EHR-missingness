@@ -10,7 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, log_loss
     
 from src.inference.inference_utils import get_detailed_instruct, extract_prediction, serialize_data, extract_structured_data
-from src.data.data_utils import preprocess_df, balance_dataset, sample_df
+from src.data.data_utils import preprocess_df, sample_df
 
 def generate_predictions(config):
     # Load in preprocessed MEDS data
@@ -22,13 +22,11 @@ def generate_predictions(config):
     # Load and concatenate all data
     dfs = []
     for files in [train_files, tune_files, test_files]:
-    #for files in [test_files]:
         for file in files:
             df = pl.read_parquet(file)
             dfs.append(df)
     
     data = pl.concat(dfs)
-    #data = balance_dataset(data, config, return_prevalence=False)
     data = sample_df(data, config)
 
     subject_dict_path = Path(config['target_dir']) / f"{config['downstream_task']}_subject_dict_{config['explicit_missingness']}_{config['labs_only']}.pkl"
@@ -64,7 +62,6 @@ def generate_predictions(config):
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype="auto",
-            attn_implementation="kernels-community/vllm-flash-attn3",
         )
 
         messages = [
@@ -169,7 +166,7 @@ def generate_predictions(config):
     predictions_dir = Path(config['predictions_dir'])
     predictions_dir.mkdir(parents=True, exist_ok=True)
     model_name = config['model_id'].split("/")[-1]
-    with open(predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_{config["explicit_missingness"]}_{config["labs_only"]}_{config['include_missingness_prompt']}.pkl', 'wb') as f:
+    with open(predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_missingness_prompt"]}.pkl', 'wb') as f:
         pickle.dump(subject_dicts, f)
 
 def generate_baseline_predictions(config):
@@ -192,7 +189,6 @@ def generate_baseline_predictions(config):
                 dfs.append(df)
         
         data = pl.concat(dfs)
-        # data, pi = balance_dataset(data, config, return_prevalence=True)
         data = sample_df(data, config)
         subject_groups = data.partition_by("subject_id", as_dict=True)
 
@@ -254,7 +250,8 @@ def generate_baseline_predictions(config):
     
     # Add missingness indicator columns
     for col in X_with_missing.columns:
-        if X_with_missing[col].isnull().any():
+        missing_frac = X_with_missing[col].isnull().mean()
+        if missing_frac > 0:  # >0% missing values
             X_with_missing[f'{col}_missing'] = X_with_missing[col].isnull().astype(int)
 
     # Calculate number of missing features per patient

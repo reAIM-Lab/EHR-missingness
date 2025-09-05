@@ -1,6 +1,7 @@
 outputs/
 figures_mlh/
 nohup.out
+configs/cuimc_*
 
 **/__pycache__/
 *.py[cod]

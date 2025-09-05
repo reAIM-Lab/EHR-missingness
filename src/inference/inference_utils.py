@@ -48,14 +48,10 @@ def serialize_data(data, config):
 
     if config['experiment'] == 'mimic':
         all_measurements = codes_to_keep_mimic.keys()
-    if config['experiment'] == 'cuimc':
-        all_measurements = codes_to_keep.keys()
 
     for measurement in all_measurements:
         if config['experiment'] == 'mimic':
             filtered_measurements = data.filter(pl.col("parent_codes").is_in(codes_to_keep_mimic[measurement]))
-        elif config['experiment'] == 'cuimc':
-            filtered_measurements = data.filter(pl.col("code").is_in(codes_to_keep[measurement]))
         if not filtered_measurements.is_empty():
             markdown_str += f"- {measurement}\n"
             filtered_measurements = filtered_measurements.with_columns(
@@ -78,22 +74,7 @@ def extract_structured_data(data, config):
     age_value = demographics['age'].to_list()[0]
     feature_dict['age'] = age_value
 
-    if config['experiment'] == 'cuimc':
-        feature_dict['gender'] = demographics['gender'].to_list()[0]
-        feature_dict['race'] = demographics['race'].to_list()[0]
-
-        all_measurements = codes_to_keep.keys()
-        for measurement in all_measurements:
-            filtered_measurements = data.filter(pl.col("code").is_in(codes_to_keep[measurement]))
-            if not filtered_measurements.is_empty():
-                filtered_measurements = filtered_measurements.with_columns(
-                    pl.col("numeric_value").cast(pl.Float64).alias("numeric_value")
-                )
-                feature_dict[measurement] = filtered_measurements["numeric_value"].to_list()[0]
-            else:
-                feature_dict[measurement] = None
-
-    elif config['experiment'] == 'mimic':
+    if config['experiment'] == 'mimic':
         all_measurements = codes_to_keep_mimic.keys()
         for measurement in all_measurements:
             filtered_measurements = data.filter(pl.col("parent_codes").is_in(codes_to_keep_mimic[measurement]))
@@ -126,21 +107,18 @@ def get_detailed_instruct(config) -> str:
     return instruction
 
 def extract_prediction(output: str) -> float:
-    #Extract numeric prediction from LLM output string.
+    """
+    Extract numeric prediction (0-1 float) from LLM output string,
+    only if the prediction is explicitly given as a percentage.
+    """
     try:
-        start = output.find("[Final Prediction:") + len("[Final Prediction:")
-        end = output.find("]", start)
-        if start == -1 or end == -1:
+        # Require % sign
+        match = re.search(r"Final Prediction:\s*([\d.]+)%", output, re.IGNORECASE)
+        if not match:
             return None
-        
-        # pred_str = output[start:end].strip().replace("%", "")
-        pred_str = re.sub(r"[^a-zA-Z0-9._-]", "", output[start:end].strip())
-        pred = float(pred_str)
-        
-        if pred < 0 or pred > 100:
-            return None
-            
-        return pred / 100.0
-        
-    except:
+
+        pred_str = match.group(1)
+        pred = float(pred_str) / 100.0
+        return pred
+    except Exception:
         return None

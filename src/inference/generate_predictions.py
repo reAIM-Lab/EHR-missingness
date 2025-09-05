@@ -1,13 +1,25 @@
+import numpy as np
 import polars as pl
 import pandas as pd
 import torch
 import pickle
 from pathlib import Path
-from torch.utils.data import TensorDataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import AutoTokenizer
 from tqdm import tqdm
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, log_loss
+from sklearn.model_selection import KFold
+from vllm import LLM, SamplingParams
+
+from openai_harmony import (
+    HarmonyEncodingName,
+    load_harmony_encoding,
+    Conversation,
+    Message,
+    Role,
+    SystemContent,
+    DeveloperContent,
+)
     
 from src.inference.inference_utils import get_detailed_instruct, extract_prediction, serialize_data, extract_structured_data
 from src.data.data_utils import preprocess_df, sample_df
@@ -55,41 +67,48 @@ def generate_predictions(config):
     query = get_detailed_instruct(config)
     unique_subjects = list(subject_dicts.keys())
     input_texts = [query + subject_dicts[subject_id]["serialization"] for subject_id in unique_subjects]
-
+    
     model_name = config['model_id']
     if model_name == "openai/gpt-oss-20b":
-        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left") 
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype="auto",
-        )
-
-        messages = [
-            [{"role": "user", "content": prompt}] # each conversation is a list of messages 
-        for prompt in input_texts]
-
-        inputs = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            return_tensors="pt",
-            return_dict=True,
-            padding=True,
-            truncation=True,
-            ).to(model.device)
+        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+ 
+        convos = [
+            Conversation.from_messages(
+                [
+                    Message.from_role_and_content(Role.SYSTEM, SystemContent.new()),
+                    Message.from_role_and_content(Role.USER, prompt),
+                ]
+            ) for prompt in input_texts
+        ]
         
-        input_ids = inputs["input_ids"]
-        attention_masks = inputs["attention_mask"]
+        prefill_ids = [
+            encoding.render_conversation_for_completion(convo, Role.ASSISTANT)
+            for convo in convos
+        ]
+        
+        # Harmony stop tokens (pass to sampler so they won't be included in output)
+        stop_token_ids = encoding.stop_tokens_for_assistant_actions()
 
-        dataset = TensorDataset(input_ids, attention_masks, torch.tensor(unique_subjects, dtype=torch.long))
-        dataloader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=False)
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=2000, stop_token_ids=stop_token_ids)
+
+        # Initialize the vLLM engine
+        llm = LLM(model=model_name)
+
+        outputs = llm.generate(
+            prompt_token_ids=prefill_ids,  
+            sampling_params=sampling_params
+            )
 
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left") 
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype="auto",
-            attn_implementation="flash_attention_2",
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=2000)
+
+        # Initialize the vLLM engine
+        llm = LLM(
+            model=model_name,
+            max_model_len=5000,
         )
+
         messages = [
             {"role": "user", "content": prompt} for prompt in input_texts
         ]
@@ -98,69 +117,21 @@ def generate_predictions(config):
                 [message],
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=False
+                enable_thinking=False,
             )
             for message in messages
         ]
-        batch_dict = tokenizer(texts, max_length=config['max_length'], padding=True, truncation=True, return_tensors='pt')
 
-        dataset = TensorDataset(batch_dict['input_ids'], batch_dict['attention_mask'], torch.tensor(unique_subjects, dtype=torch.long))
-        dataloader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=False)
+        outputs = llm.generate(texts, sampling_params)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    # Collect results
+    for i, output in enumerate(outputs):
+        output_text = output.outputs[0].text
+        pred = extract_prediction(output_text)
 
-    model.eval()
-    with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Generating predictions"):
-            input_ids, attention_mask, subject_ids = [b.to(device) for b in batch]
-
-            if config['hidden_states']:
-                outputs = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=2000,
-                    do_sample=False,
-                    temperature=None,
-                    top_p=None,
-                    top_k=None,
-                    return_dict_in_generate=True,   # return full outputs
-                    output_hidden_states=True
-                )
-                generated_ids = outputs.sequences
-            else:
-                generated_ids = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=2000,
-                    do_sample=False,
-                    temperature=None,
-                    top_p=None,
-                    top_k=None,
-                )
-                outputs = None
-
-            input_len = input_ids.size(1)
-            gen_lengths = (generated_ids != tokenizer.pad_token_id).sum(dim=1)
-            prompt_lens = (input_ids != tokenizer.pad_token_id).sum(dim=1)
-
-            for i in range(generated_ids.size(0)):
-                generated_only = generated_ids[i][input_len:]
-                output_text = tokenizer.decode(generated_only, skip_special_tokens=True).strip("\n")
-                pred = extract_prediction(output_text)
-                subject_id = subject_ids[i].item()
-                subject_dicts[subject_id]["response"] = output_text
-                subject_dicts[subject_id]["prediction"] = pred
-
-                if config['hidden_states']:
-                    length = gen_lengths[i].item() - prompt_lens[i].item()
-                    last_layer_hs = outputs.hidden_states[length-1][-1].cpu()
-                    sample_hs = last_layer_hs[i].squeeze().to(torch.float32).numpy()
-                    subject_dicts[subject_id]["hidden_states"] = sample_hs
-
-            if outputs is not None:
-                del outputs
-                torch.cuda.empty_cache()
+        subject_id = unique_subjects[i]
+        subject_dicts[subject_id]["response"] = output_text
+        subject_dicts[subject_id]["prediction"] = pred
 
     # Save predictions as pickle file
     predictions_dir = Path(config['predictions_dir'])
@@ -183,7 +154,6 @@ def generate_baseline_predictions(config):
         # Load and concatenate all data
         dfs = []
         for files in [train_files, tune_files, test_files]:
-        #for files in [test_files]:
             for file in files:
                 df = pl.read_parquet(file)
                 dfs.append(df)
@@ -206,9 +176,6 @@ def generate_baseline_predictions(config):
             features_df['race'] = features_df['race'].map(lambda x: x if x in ['unknown', 'white'] else 'non-white')
         features_df = preprocess_df(features_df)
         features_df.to_csv(processed_path, index=False)
-
-        # with open(str(processed_path).replace(".csv", "_prevalence.txt"), "w") as f:
-        #     f.write(str(pi))
 
     # Drop subject_id and split columns from both dataframes
     subject_ids = features_df['subject_id']
@@ -238,13 +205,6 @@ def generate_baseline_predictions(config):
     print("\nFull label distribution:")
     print(y.value_counts(normalize=True).rename("proportion"))
 
-    # Model 1: Random Forest without missingness indicators
-    lr_no_missing = LogisticRegression(random_state=42)
-    lr_no_missing.fit(X, y)
-    
-    # Predictions for model without missingness indicators
-    y_pred_no_missing = lr_no_missing.predict_proba(X)[:, 1]
-    
     # Create missingness indicators
     X_with_missing = features_df.drop(columns=['label']).copy()
     
@@ -263,31 +223,41 @@ def generate_baseline_predictions(config):
     # Fill missing values with 0
     X_with_missing = X_with_missing.fillna(0)
     
-    lr_with_missing = LogisticRegression(random_state=42)
-    lr_with_missing.fit(X_with_missing, y)
+    kf = KFold(n_splits=3, shuffle=True, random_state=42)
+
+    # Storage for out-of-fold predictions
+    y_pred_no_missing = np.zeros(len(y))
+    y_pred_with_missing = np.zeros(len(y))
+    coefs_with_missing = []
+
+    for train_idx, val_idx in kf.split(X):
+        # ----- Model 1: without missingness indicators -----
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train = y.iloc[train_idx]
+        
+        lr_no_missing = LogisticRegression(random_state=42, max_iter=1000)
+        lr_no_missing.fit(X_train, y_train)
+        y_pred_no_missing[val_idx] = lr_no_missing.predict_proba(X_val)[:, 1]
+
+        # ----- Model 2: with missingness indicators -----
+        X_train_miss = X_with_missing.iloc[train_idx]
+        X_val_miss = X_with_missing.iloc[val_idx]
+        y_train = y.iloc[train_idx]  # same labels
+
+        lr_with_missing = LogisticRegression(random_state=42, max_iter=1000)
+        lr_with_missing.fit(X_train_miss, y_train)
+        y_pred_with_missing[val_idx] = lr_with_missing.predict_proba(X_val_miss)[:, 1]
+        coefs_with_missing.append(lr_with_missing.coef_[0])
+
+    coefs_with_missing = np.vstack(coefs_with_missing)
+    avg_coefs_with_missing = coefs_with_missing.mean(axis=0)
 
     # Get feature importances for model without missingness indicators
-    feature_names_with_missing = X_with_missing.columns.tolist()
-    feature_importances_with_missing = dict(zip(feature_names_with_missing, lr_with_missing.coef_[0]))
+    feature_importances_with_missing = dict(zip(X_with_missing.columns, avg_coefs_with_missing))
     
     # Print all feature importances for model with missingness indicators
     sorted_all_importances = sorted(feature_importances_with_missing.items(), 
                                    key=lambda x: abs(x[1]), reverse=True)
-    
-    # print("\nAll Feature Importances (Logistic Regression with missingness indicators):")
-    # for feature, importance in sorted_all_importances:
-    #     print(f"{feature}: {importance:.4f}")
-    
-    # Filter to only missingness indicator features
-    # missingness_importances = {k: v for k, v in feature_importances_with_missing.items() if k.endswith('_missing')}
-    # sorted_missingness_importances = sorted(missingness_importances.items(), 
-    #                                       key=lambda x: abs(x[1]), reverse=True)
-    # print("\nMissingness Indicator Feature Importances (Logistic Regression with missingness indicators):")
-    # for feature, importance in sorted_missingness_importances:
-    #     print(f"{feature}: {importance:.4f}")
-    
-    # Predictions for model with missingness indicators
-    y_pred_with_missing = lr_with_missing.predict_proba(X_with_missing)[:, 1]
     
     # Evaluate both models
     auc_no_missing = roc_auc_score(y, y_pred_no_missing)

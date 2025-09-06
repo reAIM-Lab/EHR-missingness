@@ -1,9 +1,9 @@
 experiment: mimic
-meds_dir: /data/raw_data/mimic/files/mimiciv/meds_v0.6/3.1/MEDS_cohort
-task_dir: /data/processed_datasets/processed_datasets/mimic/mimic_3.1/patient_outcome_tasks/
-concept_dir: /data/raw_data/mimic/files/mimiciv/meds_v0.6/3.1/MEDS_cohort/metadata/
-target_dir: /data/processed_datasets/processed_datasets/yk3043/ehrLLM/mimic/
-predictions_dir: /home/yk3043@mc.cumc.columbia.edu/ehrLLM/outputs/mimic/
+meds_dir: /path/to/meds
+task_dir: path/to/task
+concept_dir: path/to/metadata
+target_dir: path/to/target
+predictions_dir: path/to/output
 downstream_task: in_hospital_mortality
 data_seed: 123
 

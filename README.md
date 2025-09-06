@@ -7,17 +7,17 @@ The proposed experiments consist of providing clinical data as inputs and prompt
 To reproduce the paper's results:
 
 1. **Generate MIMIC-IV MEDS build and task cohorts**  
-   Use [MEDS-DEV](https://github.com/Medical-Event-Data-Standard/MEDS-DEV/tree/main) to construct the MIMIC-IV MEDS build and downstream task cohorts.  
+   Use the following [tutorial](https://github.com/ChaoPang/mimic_tutorial) to construct the MIMIC-IV MEDS build and downstream task cohorts.  
    Follow the instructions in that repository to create the required inputs.
 
-2. **Create the final evaluation cohort**
+3. **Create the final evaluation cohort**
 
    This step extracts the clinical measurements and formats them into the final evaluation cohort used for inference.
    From this repository, run:
    ```bash
    python main.py --experiment mimic --mode generate_cohort
 
-3. **Run inference**
+4. **Run inference**
 
    Generate LLM predictions by running:
    ```bash
@@ -33,4 +33,5 @@ To install with conda:
 ```bash
 conda env create -f environment.yml
 conda activate vllm_env
+
 

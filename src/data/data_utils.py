@@ -33,7 +33,6 @@ def construct_meds_dir(old_meds_dir, new_meds_dir):
 def extract_demo(df_filtered, config):
     if config['experiment'] == 'cuimc': 
         person = df_filtered.filter(pl.col("table").str.starts_with("person"))
-    
 
         gender = (
             person.filter(pl.col("code").str.starts_with("Gender/"))
@@ -80,54 +79,6 @@ def extract_demo(df_filtered, config):
 
     return df_demographics
 
-def balance_dataset(df: pl.DataFrame, config: dict, return_prevalence: bool) -> pl.DataFrame:
-    """
-    Balances the dataset by sampling negative cases to match positive cases.
-    """
-    subject_groups = df.partition_by("subject_id", as_dict=True)
-
-    # Get label per each subject_id
-    subject_labels = {}
-    for subject_id, subject_data in subject_groups.items():
-        label = subject_data["boolean_value"][0]
-        subject_labels[subject_id[0]] = label
-    
-    positive_subjects = [sid for sid, label in subject_labels.items() if label == 1]
-    negative_subjects = [sid for sid, label in subject_labels.items() if label == 0]
-
-    # Sample negative subjects to match positive subjects count
-    num_positive = len(positive_subjects)
-    
-    if len(negative_subjects) > num_positive:
-        # Use data_seed for reproducible sampling
-        rng = random.Random(config["data_seed"])
-        sampled_negative_subjects = rng.sample(negative_subjects, num_positive)
-    else:
-        sampled_negative_subjects = negative_subjects
-    
-    # Combine positive and sampled negative subjects
-    balanced_subject_ids = positive_subjects + sampled_negative_subjects
-    
-    # Filter the original dataframe to only include balanced subjects
-    balanced_df = df.filter(pl.col("subject_id").is_in(balanced_subject_ids))
-    
-    print(f"Original dataset: {len(positive_subjects)} positive, {len(negative_subjects)} negative")
-    print(f"Balanced dataset: {len(positive_subjects)} positive, {len(sampled_negative_subjects)} negative")
-
-    # Further sample the balanced dataset if max_samples is specified
-    if 'max_samples' in config and config['max_samples'] is not None:
-        current_subjects = balanced_df['subject_id'].unique().to_list()
-        if len(current_subjects) > config['max_samples']:
-            rng = random.Random(config["data_seed"])
-            sampled_subjects = rng.sample(current_subjects, config['max_samples'])
-            balanced_df = balanced_df.filter(pl.col("subject_id").is_in(sampled_subjects))
-            print(f"Further sampled to {config['max_samples']} subjects")
-    
-    if return_prevalence:
-        return balanced_df, len(positive_subjects)/len(negative_subjects)
-
-    return balanced_df
-
 def sample_df(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     current_subjects = df['subject_id'].unique().to_list()
     if len(current_subjects) > config['max_samples']:
@@ -137,7 +88,6 @@ def sample_df(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         print(f"Further sampled to {config['max_samples']} subjects")
     
     return df
-
 
 def preprocess_df(df : pd.DataFrame) -> pd.DataFrame:
     """

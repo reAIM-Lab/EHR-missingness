@@ -31,43 +31,7 @@ def construct_meds_dir(old_meds_dir, new_meds_dir):
         data_dir.mkdir(parents=True, exist_ok=True)
 
 def extract_demo(df_filtered, config):
-    if config['experiment'] == 'cuimc': 
-        person = df_filtered.filter(pl.col("table").str.starts_with("person"))
-
-        gender = (
-            person.filter(pl.col("code").str.starts_with("Gender/"))
-            .select(
-                pl.coalesce([pl.col("concept_name"), pl.col("code").str.split("/").list.get(1)])
-                .str.to_lowercase()
-                .alias("gender")
-            )
-        )
-        race = (
-            person.filter(pl.col("code").str.starts_with("Race/"))
-            .select(
-                pl.coalesce([pl.col("concept_name"), pl.col("code").str.split("/").list.get(1)])
-                .str.to_lowercase()
-                .alias("race")
-            )
-        )
-        ethnicity = (
-            person.filter(pl.col("code").str.starts_with("Ethnicity/"))
-            .select(
-                pl.coalesce([pl.col("concept_name"), pl.col("code").str.split("/").list.get(1)])
-                .str.to_lowercase()
-                .alias("ethnicity")
-            )
-        )
-        df = df_filtered.with_columns([
-            ((pl.col("prediction_time") - pl.col("time")).dt.total_days() / 365.25)
-            .round(0)
-            .cast(pl.Int32)
-            .alias("age")
-        ])
-        age = df.filter(pl.col("code") == "MEDS_BIRTH").select(pl.col("age").alias("age"))
-        df_demographics = pl.concat([age, ethnicity, gender, race], how="horizontal")
-    
-    elif config['experiment'] == 'mimic':
+    if config['experiment'] == 'mimic':
         df_filtered = df_filtered.filter(pl.col("code").str.starts_with("MEDS_BIRTH"))
         df = df_filtered.with_columns([
             ((pl.col("prediction_time") - pl.col("time")).dt.total_days() / 365.25)

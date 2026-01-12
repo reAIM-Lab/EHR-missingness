@@ -4,7 +4,7 @@ task_dir: path/to/task
 concept_dir: path/to/metadata
 target_dir: path/to/target
 predictions_dir: path/to/output
-downstream_task: in_hospital_mortality
+downstream_task: readmission
 data_seed: 123
 
 #Preprocessing options
@@ -17,6 +17,6 @@ num_conditions: 20
 num_procedures: 20
 
 # Serialization options
-task_query: "Will this admitted patient experience in-hospital mortality during this hospitalization?"
+task_query: "Will this discharged patient be readmitted within 30 days?"
 max_samples: 5000
 train_pool: 10000

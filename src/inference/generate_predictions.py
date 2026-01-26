@@ -1,15 +1,22 @@
+import os 
 import numpy as np
 import polars as pl
 import pandas as pd
 import torch
+import json
 import pickle
 from pathlib import Path
 from transformers import AutoTokenizer
+from mistral_common.protocol.instruct.request import ChatCompletionRequest
+from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
 from tqdm import tqdm
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, log_loss
 from sklearn.model_selection import KFold
 from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
+from vllm.inputs import TokensPrompt 
+from openai import OpenAI
 
 from openai_harmony import (
     HarmonyEncodingName,
@@ -23,6 +30,8 @@ from openai_harmony import (
     
 from src.inference.inference_utils import get_detailed_instruct, extract_prediction, serialize_data, extract_structured_data
 from src.data.data_utils import preprocess_df, sample_df
+
+os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
 
 def generate_predictions(config):
     # Load in preprocessed MEDS data
@@ -39,37 +48,129 @@ def generate_predictions(config):
             dfs.append(df)
     
     data = pl.concat(dfs)
-    data = sample_df(data, config)
+    test_data, train_data = sample_df(data, config)
 
     subject_dict_path = Path(config['target_dir']) / f"{config['downstream_task']}_subject_dict_{config['explicit_missingness']}_{config['labs_only']}.pkl"
 
     if subject_dict_path.exists():
         with open(subject_dict_path, 'rb') as f:
-            subject_dicts = pickle.load(f)
+            data_dicts = pickle.load(f)
         print(f"Loaded subject_dicts from {subject_dict_path}")
     else:
-        subject_groups = data.partition_by("subject_id", as_dict=True)
-        subject_dicts = {}
+        data_dicts = {}
+
+        subject_groups = test_data.partition_by("subject_id", as_dict=True)
+        subject_dicts_test = {}
         for subject_id, subject_data in subject_groups.items():
             serialization = serialize_data(subject_data, config)
             label = subject_data["boolean_value"][0]
-            subject_dicts[subject_id[0]] = {
+            subject_dicts_test[subject_id[0]] = {
                 "serialization": serialization,
                 "label": label
             }
+        
+        data_dicts["eval"] = subject_dicts_test
+
+        subject_groups = train_data.partition_by("subject_id", as_dict=True)
+        subject_dicts_train = {}
+        for subject_id, subject_data in subject_groups.items():
+            serialization = serialize_data(subject_data, config)
+            label = subject_data["boolean_value"][0]
+            subject_dicts_train[subject_id[0]] = {
+                "serialization": serialization,
+                "label": label
+            }
+        
+        data_dicts["train"] = subject_dicts_train
 
         # Save subject_dicts to target directory
         with open(subject_dict_path, 'wb') as f:
-            pickle.dump(subject_dicts, f)
+            pickle.dump(data_dicts, f)
         
         print(f"Saved subject_dicts to {subject_dict_path}")
 
     query = get_detailed_instruct(config)
+    # subject_dicts = data_dicts['eval']
+    subject_dicts = data_dicts.get('eval', data_dicts)
     unique_subjects = list(subject_dicts.keys())
     input_texts = [query + subject_dicts[subject_id]["serialization"] for subject_id in unique_subjects]
     
     model_name = config['model_id']
-    if model_name == "openai/gpt-oss-20b":
+    predictions_dir = Path(config['predictions_dir'])
+    if os.path.exists(predictions_dir / f'predictions_{config["downstream_task"]}_{config['model_id'].split("/")[-1]}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_cot_prompt"]}.pkl'):
+        print(model_name, "ALREADY RUN")
+        return True
+
+    if model_name == "openai/gpt-5":
+        os.environ['OPENAI_API_KEY'] = config['key']
+        id = config.get('id', None)
+        client = OpenAI()
+
+        query_files = 'batch_input.jsonl'
+
+        # If no id - create query and save 
+        if id is None:
+            # Save file
+            with open(query_files, "w", encoding="utf-8") as f:
+                for i, prompt in enumerate(input_texts):
+                    request_obj = {
+                        "custom_id": f"{i}",
+                        "method": "POST",
+                        "url": "/v1/chat/completions",
+                        "body": {
+                            "model": "gpt-5",
+                            "messages": [{"role": "user", "content": prompt}],
+                            "max_completion_tokens": 4000
+                        }
+                    }
+                    f.write(json.dumps(request_obj, ensure_ascii=False) + "\n")
+
+            print(f"Saved {len(input_texts)} requests") 
+
+            # Submit 24 hours query
+            batch_input_file = client.files.create(
+                file=open(query_files, "rb"),
+                purpose="batch"
+            )
+
+            batch = client.batches.create(
+                input_file_id=batch_input_file.id,
+                endpoint="/v1/chat/completions",
+                completion_window="24h",   # maximum allowed time
+            )
+
+            print("Batch submitted")
+            print('-' * 42)
+            print("Batch ID:", batch.id)
+
+            return None
+        else:
+            # Query server for query
+            response = client.batches.retrieve(id)
+            print(response)
+            status = response.status
+            print(f"Status: {status}")
+
+            if status == "completed":
+                print("Batch completed!")
+            else:
+                print("Batch unfinished!")
+                return None
+            
+            # Process
+            ## Reorder response
+            response = client.files.content(response.output_file_id).text
+            resp_map = {}
+            for line in response.splitlines():
+                if line.strip():
+                    obj = json.loads(line)
+                    cid = int(obj["custom_id"])
+                    body = obj["response"]["body"]
+                    resp_map[cid] = body["choices"][0]["message"]["content"]
+
+            outputs = [resp_map[cid] for cid in sorted(resp_map)]
+
+    elif "openai/gpt-oss" in model_name:
         encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
  
         convos = [
@@ -85,29 +186,40 @@ def generate_predictions(config):
             encoding.render_conversation_for_completion(convo, Role.ASSISTANT)
             for convo in convos
         ]
+        inputs = [TokensPrompt(prompt_token_ids=ids) for ids in prefill_ids]
         
         # Harmony stop tokens (pass to sampler so they won't be included in output)
         stop_token_ids = encoding.stop_tokens_for_assistant_actions()
-
-        sampling_params = SamplingParams(temperature=0.0, max_tokens=2000, stop_token_ids=stop_token_ids)
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=4000, stop_token_ids=stop_token_ids)
 
         # Initialize the vLLM engine
-        llm = LLM(model=model_name)
+        llm = LLM(model=model_name, max_model_len=6000, tensor_parallel_size = 2)
 
         outputs = llm.generate(
-            prompt_token_ids=prefill_ids,  
+            prompts=inputs,
             sampling_params=sampling_params
             )
 
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left") 
-        sampling_params = SamplingParams(temperature=0.0, max_tokens=2000)
-
-        # Initialize the vLLM engine
-        llm = LLM(
-            model=model_name,
-            max_model_len=5000,
-        )
+    elif model_name.startswith("Qwen/"):
+        if config['use_finetuned']:
+            if config['finetune_method'] == 'grpo':
+                adapter_dir = f"{model_name}-GRPO/checkpoint-500" 
+            elif config['finetune_method'] == 'dpo':
+                adapter_dir = f"{model_name}-DPO/checkpoint-1455" 
+            tokenizer = AutoTokenizer.from_pretrained(adapter_dir, padding_side="left")
+            llm = LLM(model=model_name, 
+                      max_model_len=6000,
+                      enable_lora=True
+                      )
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left") 
+            llm = LLM(
+                model=model_name,
+                max_model_len=6000,
+                tensor_parallel_size = 2
+            )
+        
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=4000)
 
         messages = [
             {"role": "user", "content": prompt} for prompt in input_texts
@@ -122,11 +234,67 @@ def generate_predictions(config):
             for message in messages
         ]
 
-        outputs = llm.generate(texts, sampling_params)
+        if config['use_finetuned']:
+            if config['finetune_method'] == 'grpo':
+                outputs = llm.generate(texts, sampling_params, lora_request=LoRARequest("grpo_adapter", 1, adapter_dir))
+            elif config['finetune_method'] == 'dpo':
+                outputs = llm.generate(texts, sampling_params, lora_request=LoRARequest("dpo_adapter", 1, adapter_dir))
+        else:
+            outputs = llm.generate(texts, sampling_params)
+    
+    else:
+        if model_name.startswith("mistralai/"):
+            llm = LLM(
+                model=model_name,
+                max_model_len=6000,
+                tokenizer_mode="mistral",
+                config_format="mistral",
+                load_format="mistral",
+            )
+            messages = [
+                [
+                    {"role": "user", "content": [
+                        {
+                            "type": "text", 
+                            "text": prompt
+                        }
+                        ]
+                    }
+                ] for prompt in input_texts
+            ]
+
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left") 
+            llm = LLM(
+                model=model_name,
+                max_model_len=6000,
+                tensor_parallel_size = 2
+            )
+
+            messages = [
+                {"role": "user", "content": prompt} for prompt in input_texts
+            ]
+
+            texts = [
+                tokenizer.apply_chat_template(
+                    [message],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                for message in messages
+            ]
+        
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=4000)
+
+        if model_name.startswith("mistralai/"):
+            outputs = llm.chat(messages=messages, sampling_params=sampling_params)
+        else:
+            outputs = llm.generate(texts, sampling_params)
 
     # Collect results
-    for i, output in enumerate(outputs):
-        output_text = output.outputs[0].text
+    for i, output_text in enumerate(outputs):
+        if model_name != 'openai/gpt-5':
+            output_text = output_text.outputs[0].text
         pred = extract_prediction(output_text)
 
         subject_id = unique_subjects[i]
@@ -137,7 +305,17 @@ def generate_predictions(config):
     predictions_dir = Path(config['predictions_dir'])
     predictions_dir.mkdir(parents=True, exist_ok=True)
     model_name = config['model_id'].split("/")[-1]
-    with open(predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_missingness_prompt"]}.pkl', 'wb') as f:
+
+    if config['use_finetuned']:
+        if config['finetune_method'] == 'grpo':
+            predictions_path = predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_cot_prompt"]}_{config["use_finetuned"]}_grpo.pkl'
+        elif config['finetune_method'] == 'dpo':
+            predictions_path = predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_cot_prompt"]}_{config["use_finetuned"]}_dpo.pkl'
+    else:
+        #predictions_path = predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_cot_prompt"]}_{config["use_finetuned"]}.pkl'
+        predictions_path = predictions_dir / f'predictions_{config["downstream_task"]}_{model_name}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_cot_prompt"]}.pkl'
+
+    with open(predictions_path, 'wb') as f:
         pickle.dump(subject_dicts, f)
 
 def generate_baseline_predictions(config):
@@ -159,8 +337,8 @@ def generate_baseline_predictions(config):
                 dfs.append(df)
         
         data = pl.concat(dfs)
-        data = sample_df(data, config)
-        subject_groups = data.partition_by("subject_id", as_dict=True)
+        test_data, _ = sample_df(data, config)
+        subject_groups = test_data.partition_by("subject_id", as_dict=True)
 
         all_features = []
         for subject_id, subject_data in subject_groups.items():

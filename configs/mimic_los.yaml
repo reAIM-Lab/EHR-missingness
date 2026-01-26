@@ -17,12 +17,6 @@ num_conditions: 20
 num_procedures: 20
 
 # Serialization options
-explicit_missingness: True
-include_missingness_prompt: True
 task_query: "Will this admitted patient be hospitalized for longer than 7 days?"
-# model_id: "Qwen/Qwen3-14B" 
-model_id: "openai/gpt-oss-20b"
-max_length: 10000
 max_samples: 5000
-batch_size: 64
-hidden_states: False
+train_pool: 10000

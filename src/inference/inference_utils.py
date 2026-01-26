@@ -93,7 +93,7 @@ def get_detailed_instruct(config) -> str:
     query = config['task_query']
 
     instruction = f'You are a helpful assistant that can answer questions about the patient\'s electronic health record.'
-    if config['include_missingness_prompt']:
+    if config['include_cot_prompt']:
         instruction += (
             " In addition to the observed values, consider the missingness of recorded measurements "
             "as potentially informative. Explicitly reason about why certain measurements might be missing, "

@@ -97,7 +97,7 @@ def generate_predictions(config):
     
     model_name = config['model_id']
     predictions_dir = Path(config['predictions_dir'])
-    if os.path.exists(predictions_dir / f'predictions_{config["downstream_task"]}_{config['model_id'].split("/")[-1]}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_cot_prompt"]}.pkl'):
+    if os.path.exists(predictions_dir / f'predictions_{config["downstream_task"]}_{config["model_id"].split("/")[-1]}_{config["explicit_missingness"]}_{config["labs_only"]}_{config["include_cot_prompt"]}.pkl'):
         print(model_name, "ALREADY RUN")
         return True
 

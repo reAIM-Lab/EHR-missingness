@@ -113,11 +113,11 @@ def extract_prediction(output: str) -> float:
     """
     try:
         # Require % sign
-        match = re.search(r"Final Prediction:\s*([\d.]+)%", output, re.IGNORECASE)
-        if not match:
+        matches = re.findall(r"Final Prediction:\s*([\d.]+)\s*%", output, re.IGNORECASE)
+        if not matches:
             return None
 
-        pred_str = match.group(1)
+        pred_str = matches[-1]
         pred = float(pred_str) / 100.0
         return pred
     except Exception:

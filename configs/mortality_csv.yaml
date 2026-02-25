@@ -1,0 +1,35 @@
+experiment: mortality_csv
+target_dir: /home/yk3043@mc.cumc.columbia.edu/EHR-missingness/data/
+# Optional explicit override; if null, uses mortality_cohort + cohort_csv_paths below.
+raw_csv_path:
+mortality_cohort: ccu # options: all, micu, ccu
+cohort_csv_paths:
+  all: /home/yk3043@mc.cumc.columbia.edu/EHR-missingness/data/mortality_mimic_missingness.csv
+  micu: /home/yk3043@mc.cumc.columbia.edu/EHR-missingness/data/mortality_mimic_missingness_micu.csv
+  ccu: /home/yk3043@mc.cumc.columbia.edu/EHR-missingness/data/mortality_mimic_missingness_ccu.csv
+
+predictions_dir: /home/yk3043@mc.cumc.columbia.edu/EHR-missingness/outputs
+cache_dir: /data/huggingface_cache_SHARED/hub/
+downstream_task: mortality_csv
+data_seed: 123
+split_seed: 0
+max_model_len: 10000
+max_tokens: 5000
+num_generations: 5
+
+# split / sampling options
+train_num: 500
+test_num: 500
+labs_only: true
+
+# ICL parameters
+icl_pool_size: 50
+icl_sample_selection_mode: "stratified"
+provide_prevalence: "none" # baseline
+steering: false
+
+# model selection (Anthropic Sonnet 4.5)
+# model_id: anthropic/sonnet-4.5
+# model_id: gemini-3-flash-preview
+model_id: Qwen/Qwen3-32B
+# model_id: google/gemma-3-27b-it
